@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadCredits",
+      "Effect": "Allow",
+      "Action": ["billing:GetCredits", "aws-portal:ViewBilling"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EnterTrafficReadOnlyRole",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "arn:aws:iam::000000000000:role/AWSUsageReadOnly"
+    }
+  ]
+}
+

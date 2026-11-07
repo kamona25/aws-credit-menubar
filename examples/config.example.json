@@ -1,0 +1,11 @@
+{
+  "accountID": "000000000000",
+  "region": "us-east-1",
+  "cliPath": "/usr/local/bin/aws",
+  "payerAccount": false,
+  "traffic": {
+    "instanceName": "my-lightsail-instance",
+    "region": "ap-northeast-1"
+  }
+}
+
