@@ -7,7 +7,7 @@
 - AWS 查询密钥放在 macOS 登录钥匙串，服务名为 `io.github.kamona25.aws-credit-menubar.credentials`，条目账户为 `credit-reader`。设置为本机解锁时可用，不通过 iCloud 钥匙串同步。
 - 配置和缓存位于 `~/Library/Application Support/AWSUsageMonitor/`。目录权限为 `0700`，配置脚本保存的 `config.json` 权限为 `0600`。配置含账户 ID、实例名称、区域、可选角色 ARN 和 AWS CLI 路径，不含密钥。
 - `balance-cache.json` 含金额、抵扣金标识、描述和日期；`traffic-cache.json` 含实例 ARN 和流量；`status.json` 含刷新状态。这些文件属于使用者的私人数据，不应提交到 GitHub。
-- 提醒去重记录和首次启动设置保存在该应用的 macOS 偏好设置中。
+- 提醒去重记录、首次启动设置，以及菜单栏显示开关和排版偏好保存在该应用的 macOS 偏好设置中。
 
 公开版使用独立的应用标识、数据目录及钥匙串服务名。构建和发布公开版无需读取任何现有 AWS 凭证、私人缓存或账户配置。
 

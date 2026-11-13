@@ -219,6 +219,12 @@ enum BillingReader {
     }
 }
 
+enum MenuBarLayout: String, CaseIterable, Identifiable {
+    case horizontal, vertical
+    var id: String { rawValue }
+    var title: String { self == .horizontal ? "左右排版" : "上下排版" }
+}
+
 @MainActor final class BalanceModel: ObservableObject {
     @Published var snapshot: Snapshot?
     @Published var trafficSnapshot: TrafficSnapshot?
@@ -233,6 +239,24 @@ enum BillingReader {
     @Published var loginNeedsApproval = false
     @Published var notificationsEnabled = false
     @Published var showDetails = false
+    @Published var showBalanceInMenuBar = UserDefaults.standard.object(forKey: "menuBar.showBalance") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(showBalanceInMenuBar, forKey: "menuBar.showBalance")
+            updated?(); writeStatus()
+        }
+    }
+    @Published var showTrafficInMenuBar = UserDefaults.standard.object(forKey: "menuBar.showTraffic") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(showTrafficInMenuBar, forKey: "menuBar.showTraffic")
+            updated?(); writeStatus()
+        }
+    }
+    @Published var menuBarLayout = MenuBarLayout(rawValue: UserDefaults.standard.string(forKey: "menuBar.layout") ?? "") ?? .horizontal {
+        didSet {
+            UserDefaults.standard.set(menuBarLayout.rawValue, forKey: "menuBar.layout")
+            updated?(); writeStatus()
+        }
+    }
     var updated: (() -> Void)?
     private var timer: Timer?
     private var wakeObserver: NSObjectProtocol?
@@ -281,12 +305,19 @@ enum BillingReader {
         return "已同步"
     }
     var balanceText: String { balance.map(money) ?? "—" }
-    var menuTitle: String {
-        let amount = balance.map { "$" + compactMoney($0) } ?? "$—"
-        guard monitorsTraffic else { return amount + (error != nil ? " !" : "") }
-        let remaining = currentTraffic.flatMap { $0.incomplete ? nil : compactTraffic($0.remaining) } ?? "—"
-        return "\(amount) · \(remaining)\(error != nil || trafficError != nil ? " !" : "")"
+    var menuValues: [String] {
+        var values: [String] = []
+        if showBalanceInMenuBar {
+            let amount = balance.map { compactMoney($0) + " $" } ?? "— $"
+            values.append(amount + (error != nil ? " !" : ""))
+        }
+        if showTrafficInMenuBar && monitorsTraffic {
+            let remaining = currentTraffic.flatMap { $0.incomplete ? nil : compactTraffic($0.remaining) } ?? "—"
+            values.append(remaining + (trafficError != nil ? " !" : ""))
+        }
+        return values
     }
+    var menuTitle: String { menuValues.joined(separator: " · ") }
     func start() {
         let defaults = UserDefaults.standard
         if !defaults.bool(forKey: "didConfigureLogin") {
@@ -419,6 +450,9 @@ enum BillingReader {
         info["nextBalanceRefresh"] = nextBalanceRefresh?.description
         info["nextTrafficRefresh"] = nextTrafficRefresh?.description
         info["menuTitle"] = menuTitle
+        info["menuBarShowBalance"] = showBalanceInMenuBar
+        info["menuBarShowTraffic"] = showTrafficInMenuBar
+        info["menuBarLayout"] = menuBarLayout.rawValue
         info["trafficError"] = trafficError
         if let traffic = currentTraffic {
             info["trafficMonthUTC"] = traffic.monthStart.description
@@ -529,6 +563,21 @@ struct BalancePanel: View {
             }
             if settingsVisible {
                 VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("菜单栏显示").fontWeight(.medium).foregroundStyle(.secondary)
+                        Toggle("余量", isOn: $model.showBalanceInMenuBar)
+                            .toggleStyle(.switch).controlSize(.mini)
+                        Toggle("流量额度", isOn: $model.showTrafficInMenuBar)
+                            .toggleStyle(.switch).controlSize(.mini).disabled(!model.monitorsTraffic)
+                        HStack {
+                            Text("显示排版")
+                            Spacer()
+                            Picker("显示排版", selection: $model.menuBarLayout) {
+                                ForEach(MenuBarLayout.allCases) { layout in Text(layout.title).tag(layout) }
+                            }.labelsHidden().pickerStyle(.segmented).controlSize(.small).frame(width: 174)
+                        }
+                    }.help("只控制菜单栏显示，监控和提醒照常运行。两项均关闭时保留图标入口。")
+                    Divider()
                     Toggle("登录后自动启动", isOn: Binding(get: { model.loginEnabled }, set: { model.setLogin($0) }))
                         .toggleStyle(.switch).controlSize(.mini)
                     if model.loginNeedsApproval {
@@ -627,10 +676,37 @@ struct PanelHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
+@MainActor final class StackedMenuTitleView: NSView {
+    var lines: [String] = [] { didSet { needsDisplay = true } }
+    private let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+    private let lineAdvance: CGFloat = 11
+    private var textAttributes: [NSAttributedString.Key: Any] { [.font: font, .foregroundColor: NSColor.labelColor] }
+    var titleWidth: CGFloat { ceil(lines.map { ($0 as NSString).size(withAttributes: textAttributes).width }.max() ?? 0) + 8 }
+    override var isFlipped: Bool { true }
+    // Leave clicks and highlighting with the original status-bar button.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        let attributes = textAttributes
+        let sizes = lines.map { ($0 as NSString).size(withAttributes: attributes) }
+        // Text's typographic boxes include leading; use tighter baseline spacing
+        // so larger glyphs fit the menu bar without adding a row of empty space.
+        let blockHeight = (sizes.map(\.height).max() ?? 0) + lineAdvance * CGFloat(max(0, lines.count - 1))
+        let scale = window?.backingScaleFactor ?? 2
+        var y = (bounds.height - blockHeight) / 2
+        for (line, size) in zip(lines, sizes) {
+            let point = NSPoint(x: (((bounds.width - size.width) / 2) * scale).rounded() / scale,
+                                y: (y * scale).rounded() / scale)
+            (line as NSString).draw(at: point, withAttributes: attributes)
+            y += lineAdvance
+        }
+    }
+}
+
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNUserNotificationCenterDelegate {
     let model = BalanceModel()
     var statusItem: NSStatusItem!
     let popover = NSPopover()
+    let stackedTitle = StackedMenuTitleView(frame: .zero)
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         UNUserNotificationCenter.current().delegate = self
@@ -640,6 +716,10 @@ struct PanelHeightKey: PreferenceKey {
             button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
             button.target = self; button.action = #selector(togglePanel)
             button.setAccessibilityLabel("剩余抵扣金与实例剩余流量")
+            stackedTitle.frame = button.bounds
+            stackedTitle.autoresizingMask = [.width, .height]
+            stackedTitle.setAccessibilityElement(false)
+            button.addSubview(stackedTitle)
         }
         popover.behavior = .transient; popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let host = NSHostingController(rootView: BalancePanel(model: model))
@@ -654,9 +734,29 @@ struct PanelHeightKey: PreferenceKey {
         }
     }
     func updateStatus() {
-        statusItem.button?.title = model.menuTitle
-        statusItem.button?.setAccessibilityValue(model.menuTitle)
-        var tip = "剩余抵扣金：\(model.balance.map { "$" + money($0) } ?? "—")"
+        guard let button = statusItem.button else { return }
+        let values = model.menuValues
+        let stacked = model.menuBarLayout == .vertical && values.count > 1
+        stackedTitle.isHidden = !stacked
+        button.title = ""
+        button.image = nil
+        if stacked {
+            stackedTitle.lines = values
+            statusItem.length = stackedTitle.titleWidth
+            stackedTitle.frame = button.bounds
+        } else {
+            statusItem.length = NSStatusItem.variableLength
+            if values.isEmpty {
+                button.image = NSImage(systemSymbolName: "chart.pie", accessibilityDescription: "余量监控")
+                button.image?.isTemplate = true
+                button.imagePosition = .imageOnly
+            } else {
+                button.imagePosition = .noImage
+                button.title = model.menuTitle
+            }
+        }
+        button.setAccessibilityValue(values.isEmpty ? "仅显示图标" : values.joined(separator: "，"))
+        var tip = "剩余抵扣金：\(model.balance.map { money($0) + " $" } ?? "— $")"
         if let traffic = model.currentTraffic, !traffic.incomplete { tip += "\n实例预计剩余：\(trafficGB(traffic.remaining))" }
         tip += "\n\(model.statusText) · 余额每天"
         if model.monitorsTraffic { tip += " / 流量每 \(Int(model.trafficRefreshInterval / 60)) 分钟" }
